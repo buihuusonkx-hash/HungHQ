@@ -44,6 +44,7 @@ const defaultLevels = () => [
 export default function App() {
   const [activeTab, setActiveTab] = useState('nhap-lieu');
   const [data, setData] = useState<any[]>([]);
+  const [monHoc, setMonHoc] = useState('Toán');
 
   // Khởi tạo 1 chương trống khi load app
   useEffect(() => {
@@ -149,71 +150,85 @@ export default function App() {
 
   const totals = getTotals();
 
-  // THUẬT TOÁN TỰ ĐỘNG PHÂN BỔ (CHUẨN 2025)
+  // THUAT TOAN TU DONG PHAN BO (CHUAN 2025)
   const tuDongPhanBo = () => {
     const newData = JSON.parse(JSON.stringify(data));
     const totalSotiet = newData.reduce((acc: number, c: any) => acc + c.noiDungs.reduce((sum: number, nd: any) => sum + (nd.soTiet || 0), 0), 0);
-    
+
     if (totalSotiet === 0) {
-      alert("Vui lòng nhập 'Số tiết' cho các nội dung kiến thức trước khi tự động phân bổ!");
+      alert("Vui long nhap 'So tiet' truoc khi tu dong phan bo!");
       return;
     }
 
-    // Định mức số câu theo cấu trúc 2025: 12 MC, 4 T/F, 6 SA
-    const quota = { p1: 12, p2: 4, p3: 6 };
-    let currentIdx = { p1: 1, p2: 1, p3: 1 };
-
-    // Danh sách phẳng các bài để dễ tính toán
-    const allNoiDungs: any[] = [];
+    // Flat list
+    const allItems: any[] = [];
     newData.forEach((c: any, cIdx: number) => {
       c.noiDungs.forEach((nd: any, nIdx: number) => {
-        allNoiDungs.push({ cIdx, nIdx, soTiet: nd.soTiet || 0 });
+        allItems.push({ cIdx, nIdx, soTiet: nd.soTiet || 0 });
       });
     });
 
-    // Phân bổ câu hỏi theo tỷ lệ số tiết
-    allNoiDungs.forEach((item, idx) => {
-      const { cIdx, nIdx, soTiet } = item;
-      const ratio = soTiet / totalSotiet;
-      
-      // Tính số câu cho từng phần (làm tròn)
-      const c1 = Math.round(quota.p1 * ratio);
-      const c2 = Math.round(quota.p2 * ratio);
-      const c3 = Math.round(quota.p3 * ratio);
+    // Largest Remainder Method
+    const lrm = (total: number): number[] => {
+      const exact = allItems.map(it => (it.soTiet / totalSotiet) * total);
+      const fl = exact.map(v => Math.floor(v));
+      let rem = total - fl.reduce((a, b) => a + b, 0);
+      exact.map((v, i) => ({ r: v - fl[i], i }))
+           .sort((a, b) => b.r - a.r)
+           .slice(0, rem)
+           .forEach(({ i }) => fl[i]++);
+      return fl;
+    };
 
-      // Reset các trường
-      newData[cIdx].noiDungs[nIdx].mucDos.forEach((md: any) => {
-        md.qs.nlc = '';
-        md.qs.ds = '';
-        md.qs.tln = '';
-      });
+    const alloc1 = lrm(12); // TNPA: cau 1-12
+    const alloc2 = lrm(4);  // DS: cau 13-16
+    const alloc3 = lrm(6);  // TLN: cau 17-22
 
-      // Phân bổ câu vào các mức độ (Ví dụ quy tắc: NB > TH > VD)
-      // Phần I (MC)
-      for (let i = 0; i < c1; i++) {
-        const level = i < Math.ceil(c1 * 0.5) ? 0 : (i < Math.ceil(c1 * 0.8) ? 1 : 2);
-        const current = newData[cIdx].noiDungs[nIdx].mucDos[level].qs.nlc;
-        newData[cIdx].noiDungs[nIdx].mucDos[level].qs.nlc = (current ? current + ', ' : '') + `Câu ${currentIdx.p1++}`;
+    let nlc = 1, ds = 13, tln = 17;
+
+    allItems.forEach((item, i) => {
+      const { cIdx, nIdx } = item;
+      const nd = newData[cIdx].noiDungs[nIdx];
+      nd.mucDos.forEach((md: any) => { md.qs.nlc = ''; md.qs.ds = ''; md.qs.tln = ''; });
+
+      // TNPA: NB (~60%) => mucDos[0], TH (~40%) => mucDos[1]
+      const c1 = alloc1[i];
+      const c1NB = Math.ceil(c1 * 0.6), c1TH = c1 - c1NB;
+      for (let k = 0; k < c1NB; k++) {
+        const cur = nd.mucDos[0].qs.nlc;
+        nd.mucDos[0].qs.nlc = (cur ? cur + ', ' : '') + `Cau ${nlc++}`;
+      }
+      for (let k = 0; k < c1TH; k++) {
+        const cur = nd.mucDos[1].qs.nlc;
+        nd.mucDos[1].qs.nlc = (cur ? cur + ', ' : '') + `Cau ${nlc++}`;
       }
 
-      // Phần II (True/False)
-      for (let i = 0; i < c2; i++) {
-        const level = i < Math.ceil(c2 * 0.5) ? 0 : (i < Math.ceil(c2 * 0.8) ? 1 : 2);
-        const current = newData[cIdx].noiDungs[nIdx].mucDos[level].qs.ds;
-        newData[cIdx].noiDungs[nIdx].mucDos[level].qs.ds = (current ? current + ', ' : '') + `Câu ${currentIdx.p2++}`;
+      // DS: tat ca vao mucDos[0] (1 cau = 4 y: a=NB, b,c=TH, d=VD)
+      const c2 = alloc2[i];
+      for (let k = 0; k < c2; k++) {
+        const cur = nd.mucDos[0].qs.ds;
+        nd.mucDos[0].qs.ds = (cur ? cur + ', ' : '') + `Cau ${ds++}`;
       }
 
-      // Phần III (Short Answer)
-      for (let i = 0; i < c3; i++) {
-        const level = i < Math.ceil(c3 * 0.5) ? 0 : (i < Math.ceil(c3 * 0.8) ? 1 : 2);
-        const current = newData[cIdx].noiDungs[nIdx].mucDos[level].qs.tln;
-        newData[cIdx].noiDungs[nIdx].mucDos[level].qs.tln = (current ? current + ', ' : '') + `Câu ${currentIdx.p3++}`;
+      // TLN: NB (2/6)=>mucDos[0], TH (2/6)=>mucDos[1], VD+VDC (2/6)=>mucDos[2]
+      const c3 = alloc3[i];
+      const c3NB = Math.round(c3 * 2 / 6);
+      const c3TH = Math.round(c3 * 2 / 6);
+      const c3VD = c3 - c3NB - c3TH;
+      for (let k = 0; k < c3NB; k++) {
+        const cur = nd.mucDos[0].qs.tln;
+        nd.mucDos[0].qs.tln = (cur ? cur + ', ' : '') + `Cau ${tln++}`;
+      }
+      for (let k = 0; k < c3TH; k++) {
+        const cur = nd.mucDos[1].qs.tln;
+        nd.mucDos[1].qs.tln = (cur ? cur + ', ' : '') + `Cau ${tln++}`;
+      }
+      for (let k = 0; k < c3VD; k++) {
+        const cur = nd.mucDos[2].qs.tln;
+        nd.mucDos[2].qs.tln = (cur ? cur + ', ' : '') + `Cau ${tln++}`;
       }
     });
 
-    // Điều chỉnh khớp tổng số câu nếu bị dư/thiếu do làm tròn
-    // (Trong phiên bản này ta để người dùng chỉnh sửa thêm nếu cần)
-    
     setData(newData);
   };
 
@@ -498,27 +513,33 @@ export default function App() {
                                   </div>
                                   <div className="grid grid-cols-1 gap-3">
                                     <div className="group">
-                                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">Nhiều lựa chọn</label>
+                                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">
+                                        {mIdx === 0 ? 'Nhiều lựa chọn (Câu NB)' : mIdx === 1 ? 'Nhiều lựa chọn (Câu TH)' : 'Nhiều lựa chọn (Câu VD — hiếm)'}
+                                      </label>
                                       <input 
-                                        placeholder="Câu 1, 2..." 
+                                        placeholder={mIdx === 0 ? 'Câu 1, 2, 3...' : mIdx === 1 ? 'Câu 8, 9...' : 'Câu...'} 
                                         className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                                         value={md.qs.nlc} 
                                         onChange={e => handleUpdateQS(cIdx, nIdx, mIdx, 'nlc', e.target.value)}
                                       />
                                     </div>
                                     <div className="group">
-                                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">Đúng - Sai</label>
+                                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">
+                                        {mIdx === 0 ? 'Đúng-Sai: ý a — NB (câu 13–16)' : mIdx === 1 ? 'Đúng-Sai: ý b,c — TH' : 'Đúng-Sai: ý d — VD'}
+                                      </label>
                                       <input 
-                                        placeholder="Câu 1a, 1b..." 
+                                        placeholder={mIdx === 0 ? 'Câu 13, 14, 15, 16' : mIdx === 1 ? 'Câu 13, 14...' : 'Câu 13, 14...'} 
                                         className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                                         value={md.qs.ds} 
                                         onChange={e => handleUpdateQS(cIdx, nIdx, mIdx, 'ds', e.target.value)}
                                       />
                                     </div>
                                     <div className="group">
-                                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">Trả lời ngắn</label>
+                                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">
+                                        {mIdx === 0 ? 'Trả lời ngắn NB (câu 17, 18)' : mIdx === 1 ? 'Trả lời ngắn TH (câu 19, 20)' : 'Trả lời ngắn VD+VDC (câu 21, 22)'}
+                                      </label>
                                       <input 
-                                        placeholder="Câu 1..." 
+                                        placeholder={mIdx === 0 ? 'Câu 17, 18' : mIdx === 1 ? 'Câu 19, 20' : 'Câu 21, 22'} 
                                         className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                                         value={md.qs.tln} 
                                         onChange={e => handleUpdateQS(cIdx, nIdx, mIdx, 'tln', e.target.value)}
@@ -557,8 +578,23 @@ export default function App() {
               className="bg-white p-6 md:p-10 rounded-[2.5rem] border border-slate-200 shadow-2xl relative"
             >
               <div className="mb-10 text-center">
-                <h2 className="text-3xl font-black text-slate-900 tracking-tight uppercase">Ma trận Đề kiểm tra Môn Toán 12</h2>
+                <h2 className="text-3xl font-black text-slate-900 tracking-tight uppercase">Ma trận Đề kiểm tra Môn {monHoc} 12</h2>
                 <p className="text-slate-400 text-xs mt-2 italic font-medium">(Dành cho kỳ thi tốt nghiệp THPT và kiểm tra định kỳ)</p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {['Toán', 'Lý', 'Hóa', 'Sinh', 'Sử', 'Địa', 'KTPL', 'Anh'].map(mon => (
+                    <button
+                      key={mon}
+                      onClick={() => setMonHoc(mon)}
+                      className={`px-4 py-2 rounded-full font-bold text-xs transition-all border-2 ${
+                        monHoc === mon
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 scale-105'
+                          : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
+                      }`}
+                    >
+                      {mon}
+                    </button>
+                  ))}
+                </div>
                 <div className="mt-6 flex flex-wrap justify-center gap-3">
                   <button onClick={themChuongMoi} className="px-5 py-2.5 bg-slate-600 text-white rounded-lg font-bold text-xs flex items-center hover:bg-slate-700 transition-all shadow-md">
                     <Plus className="w-3.5 h-3.5 mr-2" /> Thêm Chương
@@ -840,63 +876,74 @@ export default function App() {
               </div>
 
               <div className="overflow-x-auto -mx-8 px-8">
-                <table id="dac-ta-table" className="w-full border-collapse text-sm min-w-[1000px]">
+                <table id="dac-ta-table" className="w-full border-collapse text-sm min-w-[1200px]">
                   <thead>
                     <tr className="bg-slate-900 text-white">
                       <th className="border border-slate-800 p-4 w-12 text-[10px] uppercase font-black" rowSpan={3}>TT</th>
                       <th className="border border-slate-800 p-4 w-56 text-[10px] uppercase font-black" rowSpan={3}>Chương / Chủ đề</th>
-                      <th className="border border-slate-800 p-4 w-48 text-[10px] uppercase font-black" rowSpan={3}>Nội dung</th>
+                      <th className="border border-slate-800 p-4 w-48 text-[10px] uppercase font-black" rowSpan={3}>Nội dung kiến thức</th>
                       <th className="border border-slate-800 p-4 w-32 text-[10px] uppercase font-black" rowSpan={3}>Mức độ</th>
                       <th className="border border-slate-800 p-4 text-[10px] uppercase font-black" rowSpan={3}>Yêu cầu cần đạt</th>
-                      <th className="border border-slate-800 p-2 text-[10px] uppercase font-black" colSpan={7}>Số câu hỏi theo định dạng</th>
+                      <th className="border border-slate-800 p-2 text-[10px] uppercase font-black text-center" colSpan={9}>Số câu hỏi theo mức độ nhận thức</th>
                     </tr>
-                    <tr className="bg-slate-800 text-slate-300">
-                      <th className="border border-slate-700 p-2 text-[9px] uppercase font-bold" colSpan={2}>Nhiều lựa chọn</th>
-                      <th className="border border-slate-700 p-2 text-[9px] uppercase font-bold" colSpan={3}>Đúng - Sai (ý)</th>
-                      <th className="border border-slate-700 p-2 text-[9px] uppercase font-bold" colSpan={2}>Trả lời ngắn</th>
+                    <tr>
+                      <th className="border border-slate-700 p-2 text-[9px] uppercase font-bold text-center" colSpan={2} style={{background:'#065f46',color:'#fff'}}>TNPA (C1–C12)</th>
+                      <th className="border border-slate-700 p-2 text-[9px] uppercase font-bold text-center" colSpan={3} style={{background:'#92400e',color:'#fff'}}>Đúng/Sai (C13–C16)</th>
+                      <th className="border border-slate-700 p-2 text-[9px] uppercase font-bold text-center" colSpan={4} style={{background:'#7f1d1d',color:'#fff'}}>Trả lời ngắn (C17–C22)</th>
                     </tr>
-                    <tr className="bg-slate-100 text-slate-500">
-                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black">Biết</th>
-                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black">Hiểu</th>
-                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black">Biết</th>
-                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black">Hiểu</th>
-                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black">Vận dụng</th>
-                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black">Hiểu</th>
-                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black">Vận dụng c.</th>
+                    <tr className="bg-slate-100 text-slate-600">
+                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black" style={{background:'#d1fae5',color:'#065f46'}}>NB<br/>(Biết)</th>
+                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black" style={{background:'#d1fae5',color:'#065f46'}}>TH<br/>(Hiểu)</th>
+                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black" style={{background:'#fef3c7',color:'#92400e'}}>NB<br/>(4ý-a)</th>
+                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black" style={{background:'#fef3c7',color:'#92400e'}}>TH<br/>(8ý-bc)</th>
+                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black" style={{background:'#fef3c7',color:'#92400e'}}>VD<br/>(4ý-d)</th>
+                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black" style={{background:'#ffe4e6',color:'#7f1d1d'}}>NB<br/>(C17,18)</th>
+                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black" style={{background:'#ffe4e6',color:'#7f1d1d'}}>TH<br/>(C19,20)</th>
+                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black" style={{background:'#ffe4e6',color:'#7f1d1d'}}>VD<br/>(C21)</th>
+                      <th className="border border-slate-200 p-1.5 w-14 text-[8px] font-black" style={{background:'#ffe4e6',color:'#7f1d1d'}}>VDC<br/>(C22)</th>
                     </tr>
                   </thead>
                   <tbody className="text-slate-700">
                     {data.map((chuong, cIdx) => (
                       chuong.tenChuong && chuong.noiDungs.map((nd: any, nIdx: number) => (
-                        nd.tenNoiDung && nd.mucDos.map((md: any, mIdx: number) => (
-                          <tr key={`row-${cIdx}-${nIdx}-${mIdx}`} className="hover:bg-indigo-50/30 transition-colors group">
-                            {nIdx === 0 && mIdx === 0 && (
-                              <td className="border border-slate-200 p-4 font-black text-center bg-slate-50" rowSpan={calculateRowSpan(chuong)}>{cIdx + 1}</td>
-                            )}
-                            {nIdx === 0 && mIdx === 0 && (
-                              <td className="border border-slate-200 p-4 font-black text-slate-900 bg-slate-50" rowSpan={calculateRowSpan(chuong)}>{chuong.tenChuong}</td>
-                            )}
-                            {mIdx === 0 && (
-                              <td className="border border-slate-200 p-4 font-bold text-indigo-600" rowSpan={nd.mucDos.length}>{nd.tenNoiDung}</td>
-                            )}
-                            <td className={`border border-slate-200 p-4 text-[11px] font-black text-center uppercase tracking-tighter ${md.color}`}>
-                              {md.tenMucDo}
-                            </td>
-                            <td className="border border-slate-200 p-4 whitespace-pre-line text-[11px] leading-relaxed text-justify text-slate-600">
-                              {md.yeuCau || '---'}
-                            </td>
-                            {/* Multiple Choice */}
-                            <td className="border border-slate-200 p-2 text-center font-bold text-slate-900">{mIdx === 0 ? md.qs.nlc : ''}</td>
-                            <td className="border border-slate-200 p-2 text-center font-bold text-slate-900">{mIdx === 1 ? md.qs.nlc : ''}</td>
-                            {/* Đúng Sai */}
-                            <td className="border border-slate-200 p-2 text-center font-bold text-slate-900">{mIdx === 0 ? md.qs.ds : ''}</td>
-                            <td className="border border-slate-200 p-2 text-center font-bold text-slate-900">{mIdx === 1 ? md.qs.ds : ''}</td>
-                            <td className="border border-slate-200 p-2 text-center font-bold text-slate-900">{mIdx === 2 ? md.qs.ds : ''}</td>
-                            {/* Trả lời ngắn */}
-                            <td className="border border-slate-200 p-2 text-center font-bold text-slate-900">{mIdx === 1 ? md.qs.tln : ''}</td>
-                            <td className="border border-slate-200 p-2 text-center font-bold text-slate-900">{mIdx === 2 ? md.qs.tln : ''}</td>
-                          </tr>
-                        ))
+                        nd.tenNoiDung && nd.mucDos.map((md: any, mIdx: number) => {
+                          // Split VD/VDC from mucDos[2].qs.tln for TLN
+                          const tlnVDRaw = mIdx === 2 ? (md.qs.tln || '') : '';
+                          // Count for display
+                          const tlnVDCount = tlnVDRaw ? Math.ceil(tlnVDRaw.split(/[,;\s]+/).filter((s:string) => s && s.match(/\d/)).length / 2) : 0;
+                          const tlnVDCCount = tlnVDRaw ? Math.floor(tlnVDRaw.split(/[,;\s]+/).filter((s:string) => s && s.match(/\d/)).length / 2) : 0;
+                          return (
+                            <tr key={`row-${cIdx}-${nIdx}-${mIdx}`} className="hover:bg-indigo-50/30 transition-colors group">
+                              {nIdx === 0 && mIdx === 0 && (
+                                <td className="border border-slate-200 p-4 font-black text-center bg-slate-50" rowSpan={calculateRowSpan(chuong)}>{cIdx + 1}</td>
+                              )}
+                              {nIdx === 0 && mIdx === 0 && (
+                                <td className="border border-slate-200 p-4 font-black text-slate-900 bg-slate-50" rowSpan={calculateRowSpan(chuong)}>{chuong.tenChuong}</td>
+                              )}
+                              {mIdx === 0 && (
+                                <td className="border border-slate-200 p-4 font-bold text-indigo-600" rowSpan={nd.mucDos.length}>{nd.tenNoiDung}</td>
+                              )}
+                              <td className={`border border-slate-200 p-3 text-[11px] font-black text-center uppercase tracking-tighter ${md.color}`}>
+                                {md.tenMucDo}
+                              </td>
+                              <td className="border border-slate-200 p-3 whitespace-pre-line text-[11px] leading-relaxed text-justify text-slate-600">
+                                {md.yeuCau || '---'}
+                              </td>
+                              {/* TNPA: NB=mIdx0, TH=mIdx1 */}
+                              <td className="border border-slate-200 p-2 text-center font-bold text-emerald-800" style={{background:'#f0fdf4'}}>{mIdx === 0 ? (md.qs.nlc || '') : ''}</td>
+                              <td className="border border-slate-200 p-2 text-center font-bold text-emerald-800" style={{background:'#f0fdf4'}}>{mIdx === 1 ? (md.qs.nlc || '') : ''}</td>
+                              {/* Đúng/Sai: NB=mIdx0, TH=mIdx1, VD=mIdx2 */}
+                              <td className="border border-slate-200 p-2 text-center font-bold text-amber-800" style={{background:'#fffbeb'}}>{mIdx === 0 ? (md.qs.ds || '') : ''}</td>
+                              <td className="border border-slate-200 p-2 text-center font-bold text-amber-800" style={{background:'#fffbeb'}}>{mIdx === 1 ? (md.qs.ds || '') : ''}</td>
+                              <td className="border border-slate-200 p-2 text-center font-bold text-amber-800" style={{background:'#fffbeb'}}>{mIdx === 2 ? (md.qs.ds || '') : ''}</td>
+                              {/* TLN: NB=mIdx0, TH=mIdx1, VD=ceil(mIdx2/2), VDC=floor(mIdx2/2) */}
+                              <td className="border border-slate-200 p-2 text-center font-bold text-rose-800" style={{background:'#fff1f2'}}>{mIdx === 0 ? (md.qs.tln || '') : ''}</td>
+                              <td className="border border-slate-200 p-2 text-center font-bold text-rose-800" style={{background:'#fff1f2'}}>{mIdx === 1 ? (md.qs.tln || '') : ''}</td>
+                              <td className="border border-slate-200 p-2 text-center font-bold text-rose-800" style={{background:'#fff1f2'}}>{mIdx === 2 ? (tlnVDCount || '') : ''}</td>
+                              <td className="border border-slate-200 p-2 text-center font-bold text-rose-800" style={{background:'#fff1f2'}}>{mIdx === 2 ? (tlnVDCCount || '') : ''}</td>
+                            </tr>
+                          );
+                        })
                       ))
                     ))}
                     {data.every(c => !c.tenChuong) && (
@@ -1102,13 +1149,34 @@ function generateExamQuestions(data: any[], countQuestions: (s: string) => numbe
         });
       }
 
-      // ── PHẦN III: Trả lời ngắn (tln) ───────────────────────────────
-      // TH từ mucDos[1], VD+VDC từ mucDos[2] (chia đôi: nửa đầu = VD, nửa sau = VDC)
-      const nTlnTH  = countQuestions(nd.mucDos[1]?.qs?.tln || '');
+      // ── PHẦN III: Trả lời ngắn (tln) – Câu 17→22 ──────────────────────
+      // Cấu trúc chuẩn 2025:
+      //   NB  (câu 17,18): đọc từ mucDos[0].qs.tln
+      //   TH  (câu 19,20): đọc từ mucDos[1].qs.tln
+      //   VD  (câu 21):    ceil(mucDos[2].qs.tln / 2)
+      //   VDC (câu 22):    floor(mucDos[2].qs.tln / 2)
+      const nTlnNB     = countQuestions(nd.mucDos[0]?.qs?.tln || '');
+      const nTlnTH     = countQuestions(nd.mucDos[1]?.qs?.tln || '');
       const nTlnVD_raw = countQuestions(nd.mucDos[2]?.qs?.tln || '');
-      const nTlnVD  = Math.ceil(nTlnVD_raw / 2);
-      const nTlnVDC = Math.floor(nTlnVD_raw / 2);
+      const nTlnVD     = Math.ceil(nTlnVD_raw / 2);
+      const nTlnVDC    = Math.floor(nTlnVD_raw / 2);
 
+      // TLN – Nhận biết (câu 17, 18)
+      for (let k = 0; k < nTlnNB; k++) {
+        const bq = getQuestionsFromBank(nd.tenNoiDung, 'tln', 'Nhận biết');
+        tlnCount++;
+        result.push({
+          id: Date.now() + Math.random(),
+          phan: 'tln', soThuTu: tlnCount,
+          chuong: chuong.tenChuong,
+          noiDung: nd.tenNoiDung,
+          mucDo: 'Nhận biết',
+          yeuCau: nd.mucDos[0]?.yeuCau || '',
+          noiDungCauHoi: bq ? bq.noiDung : `[NHẬN BIẾT – TLN] ${nd.tenNoiDung}`,
+          dapAn: bq ? bq.dapAn : '...',
+        });
+      }
+      // TLN – Thông hiểu (câu 19, 20)
       for (let k = 0; k < nTlnTH; k++) {
         const bq = getQuestionsFromBank(nd.tenNoiDung, 'tln', 'Thông hiểu');
         tlnCount++;
@@ -1123,6 +1191,7 @@ function generateExamQuestions(data: any[], countQuestions: (s: string) => numbe
           dapAn: bq ? bq.dapAn : '...',
         });
       }
+      // TLN – Vận dụng (câu 21)
       for (let k = 0; k < nTlnVD; k++) {
         const bq = getQuestionsFromBank(nd.tenNoiDung, 'tln', 'Vận dụng');
         tlnCount++;
@@ -1137,6 +1206,7 @@ function generateExamQuestions(data: any[], countQuestions: (s: string) => numbe
           dapAn: bq ? bq.dapAn : '...',
         });
       }
+      // TLN – Vận dụng cao (câu 22)
       for (let k = 0; k < nTlnVDC; k++) {
         const bq = getQuestionsFromBank(nd.tenNoiDung, 'tln', 'Vận dụng cao');
         tlnCount++;
